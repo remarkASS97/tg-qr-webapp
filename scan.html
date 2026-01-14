@@ -25,7 +25,6 @@
       position: relative;
     }
 
-    /* Верхняя панель статуса */
     #topbar {
       position: fixed;
       top: 10px;
@@ -41,33 +40,7 @@
       white-space: pre-line;
     }
 
-    /* Нижняя панель кнопок */
-    #bottombar {
-      position: fixed;
-      bottom: 12px;
-      left: 0;
-      right: 0;
-      z-index: 60;
-      display: flex;
-      justify-content: center;
-      gap: 10px;
-      padding: 0 12px;
-    }
-
-    .btn {
-      background: rgba(255,255,255,0.14);
-      border: 1px solid rgba(255,255,255,0.25);
-      color: #fff;
-      padding: 10px 12px;
-      border-radius: 10px;
-      font-size: 14px;
-      cursor: pointer;
-      user-select: none;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .btn:active { transform: scale(0.98); }
-
-    /* Центральная рамка-оверлей */
+    /* Центр-рамка */
     #overlay {
       position: fixed;
       left: 50%;
@@ -82,7 +55,6 @@
       pointer-events: none;
     }
 
-    /* “Углы” рамки для более явного наведения */
     .corner {
       position: absolute;
       width: 22px;
@@ -93,32 +65,6 @@
     .c-tr { right: -3px; top: -3px; border-left: 0; border-bottom: 0; border-top-right-radius: 12px; }
     .c-bl { left: -3px; bottom: -3px; border-right: 0; border-top: 0; border-bottom-left-radius: 12px; }
     .c-br { right: -3px; bottom: -3px; border-left: 0; border-top: 0; border-bottom-right-radius: 12px; }
-
-    /* Слайдер зума (показываем только если zoom поддерживается) */
-    #zoomWrap {
-      position: fixed;
-      right: 12px;
-      top: 70px;
-      z-index: 70;
-      background: rgba(0,0,0,0.35);
-      border: 1px solid rgba(255,255,255,0.18);
-      border-radius: 10px;
-      padding: 10px;
-      display: none;
-      width: 160px;
-    }
-    #zoomWrap label {
-      display: block;
-      font-size: 12px;
-      opacity: 0.85;
-      margin-bottom: 6px;
-    }
-    #zoom {
-      width: 100%;
-    }
-
-    /* скрытый input для fallback-съёмки */
-    #fileInput { display: none; }
   </style>
 </head>
 
@@ -134,36 +80,17 @@
     <div class="corner c-br"></div>
   </div>
 
-  <div id="zoomWrap">
-    <label for="zoom">Зум</label>
-    <input id="zoom" type="range" min="1" max="1" step="0.1" value="1" />
-  </div>
-
-  <div id="bottombar">
-    <button class="btn" id="btnRescan">Сканировать дальше</button>
-    <button class="btn" id="btnPhoto">Сфотографировать QR</button>
-  </div>
-
-  <input id="fileInput" type="file" accept="image/*" capture="environment" />
-
   <script>
     const tg = Telegram.WebApp;
     tg.expand();
 
     const topbar = document.getElementById("topbar");
-    const fileInput = document.getElementById("fileInput");
-    const btnPhoto = document.getElementById("btnPhoto");
-    const btnRescan = document.getElementById("btnRescan");
-    const zoomWrap = document.getElementById("zoomWrap");
-    const zoomSlider = document.getElementById("zoom");
 
-    // Подбираем размер рамки под твои небольшие QR
-    // Цель: оператор подносит QR так, чтобы он почти заполнял рамку.
+    // Рамка под небольшие “производственные” QR
     const minSide = Math.min(window.innerWidth, window.innerHeight);
-    const box = Math.max(150, Math.min(200, Math.floor(minSide * 0.48)));
+    const box = Math.max(150, Math.min(190, Math.floor(minSide * 0.45)));
     document.documentElement.style.setProperty("--box", box + "px");
 
-    // html5-qrcode конфиг
     const config = {
       fps: 25,
       qrbox: { width: box, height: box },
@@ -173,73 +100,36 @@
 
     let locked = false;
     let lastSent = "";
-    let html5 = new Html5Qrcode("reader");
+
+    const qr = new Html5Qrcode("reader");
 
     function setStatus(text) {
       topbar.textContent = text;
     }
 
     function sendToBot(decodedText) {
-      // отсекаем дубли (часто декодер стреляет несколько раз подряд)
+      // анти-дубликаты
       if (decodedText === lastSent) return;
       lastSent = decodedText;
 
-      setStatus("QR распознан:\n" + decodedText + "\nОтправляю в бота…");
+      setStatus("QR распознан:\n" + decodedText + "\nОтправлено в бота. Сканируйте следующий.");
       tg.sendData(decodedText);
-      setStatus("QR распознан:\n" + decodedText + "\nОтправлено в бота. Можно сканировать следующий.");
     }
 
-    async function tryApplyAutoZoom() {
-      // Попытка применить zoom к видео-треку, если устройство поддерживает.
-      // Telegram WebView может урезать возможности, но пробуем корректно.
-      const video = document.querySelector("#reader video");
-      if (!video || !video.srcObject) return;
-
-      const track = video.srcObject.getVideoTracks?.()[0];
-      if (!track) return;
-
-      const caps = track.getCapabilities ? track.getCapabilities() : null;
-      if (!caps || !caps.zoom) return;
-
-      // Показываем слайдер зума
-      zoomWrap.style.display = "block";
-      zoomSlider.min = caps.zoom.min;
-      zoomSlider.max = caps.zoom.max;
-      zoomSlider.step = caps.zoom.step || 0.1;
-
-      // “Автозум”: ставим значение ближе к верхней трети (хорошо для мелких QR),
-      // но не упираемся в максимум.
-      const preferred = Math.min(caps.zoom.max, Math.max(caps.zoom.min, caps.zoom.min + (caps.zoom.max - caps.zoom.min) * 0.65));
-      zoomSlider.value = preferred;
-
-      try {
-        await track.applyConstraints({ advanced: [{ zoom: preferred }] });
-      } catch (_) {
-        // если WebView запретил — просто молча игнорируем
-      }
-
-      zoomSlider.oninput = async () => {
-        const z = Number(zoomSlider.value);
-        try {
-          await track.applyConstraints({ advanced: [{ zoom: z }] });
-        } catch (_) {}
-      };
-    }
-
-    async function startCameraScan() {
+    async function start() {
       locked = false;
       setStatus("Наведи QR в рамку. Сканирование…");
 
-      // Важно: НЕ закрываем WebApp после скана — так меньше повторных запросов разрешений.
-      await html5.start(
+      await qr.start(
         { facingMode: "environment" },
         config,
         (decodedText) => {
           if (locked) return;
           locked = true;
+
           sendToBot(decodedText);
 
-          // Разблокируем через небольшую паузу для следующего QR
+          // Разрешаем следующий скан через короткую паузу
           setTimeout(() => {
             locked = false;
             setStatus("Наведи следующий QR в рамку. Сканирование…");
@@ -247,67 +137,9 @@
         },
         () => {}
       );
-
-      // попытка автозума после старта
-      setTimeout(() => { tryApplyAutoZoom(); }, 600);
     }
 
-    async function stopCameraScan() {
-      try {
-        if (html5 && (await html5.getState?.()) === Html5QrcodeScannerState?.SCANNING) {
-          await html5.stop();
-        } else {
-          // Если getState недоступен, пробуем stop без проверки
-          await html5.stop();
-        }
-      } catch (_) {}
-    }
-
-    // Fallback: “Сфотографировать QR”
-    // Открывает камеру/галерею через input capture, а затем пытается декодировать файл.
-    btnPhoto.addEventListener("click", () => fileInput.click());
-
-    fileInput.addEventListener("change", async () => {
-      const file = fileInput.files && fileInput.files[0];
-      fileInput.value = "";
-      if (!file) return;
-
-      setStatus("Обрабатываю фото…");
-      try {
-        // На iOS/Telegram может быть безопаснее сначала остановить live-скан
-        await stopCameraScan();
-
-        const decodedText = await html5.scanFile(file, true);
-        sendToBot(decodedText);
-
-        // Возвращаемся в live-скан (по желанию)
-        setTimeout(() => {
-          startCameraScan().catch(err => setStatus("Ошибка камеры: " + err));
-        }, 600);
-      } catch (err) {
-        setStatus("Не удалось распознать QR с фото.\nПопробуй ближе/резче.\n" + (err?.message || err));
-        // Возвращаемся в live-скан
-        setTimeout(() => {
-          startCameraScan().catch(e => setStatus("Ошибка камеры: " + e));
-        }, 900);
-      }
-    });
-
-    // Кнопка “Сканировать дальше” (на случай если оператор хочет сбросить состояние)
-    btnRescan.addEventListener("click", async () => {
-      lastSent = "";
-      locked = false;
-      setStatus("Перезапуск сканера…");
-      try {
-        await stopCameraScan();
-      } catch (_) {}
-      startCameraScan().catch(err => setStatus("Ошибка камеры: " + err));
-    });
-
-    // Старт
-    startCameraScan().catch(err => {
-      setStatus("Ошибка камеры: " + err);
-    });
+    start().catch(err => setStatus("Ошибка камеры: " + err));
   </script>
 </body>
 </html>
