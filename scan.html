@@ -3,23 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <title>QR Scanner</title>
-
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <!-- Telegram WebApp API -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-    <!-- Live QR scanner -->
+    <!-- QR scanner -->
     <script src="https://unpkg.com/html5-qrcode"></script>
 
     <style>
-        html, body {
+        body {
             margin: 0;
-            padding: 0;
             background: black;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #status {
+            position: fixed;
+            top: 10px;
             width: 100%;
-            height: 100%;
-            overflow: hidden;
+            text-align: center;
+            z-index: 10;
+            font-size: 18px;
         }
         #reader {
             width: 100vw;
@@ -29,27 +34,48 @@
 </head>
 <body>
 
+<div id="status">📷 Наведите камеру на QR-код</div>
 <div id="reader"></div>
 
 <script>
-    const tg = window.Telegram.WebApp;
+    const tg = Telegram.WebApp;
     tg.expand();
+
+    let scanned = false;
 
     const scanner = new Html5Qrcode("reader");
 
     scanner.start(
         { facingMode: "environment" },
         {
-            fps: 10,
-            qrbox: 250
+            fps: 15,
+            qrbox: { width: 280, height: 280 }
         },
         (decodedText) => {
+            if (scanned) return;
+            scanned = true;
+
+            document.getElementById("status").innerText =
+                "✅ QR распознан:\n" + decodedText;
+
+            // отправляем QR в бота
             tg.sendData(decodedText);
-            scanner.stop();
-            tg.close();
+
+            // даём пользователю увидеть результат
+            setTimeout(() => {
+                scanner.stop();
+                tg.close();
+            }, 700);
+        },
+        (error) => {
+            // ошибки сканирования игнорируем
         }
-    );
+    ).catch(err => {
+        document.getElementById("status").innerText =
+            "❌ Ошибка камеры: " + err;
+    });
 </script>
 
 </body>
 </html>
+
