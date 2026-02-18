@@ -40,7 +40,6 @@
       white-space: pre-line;
     }
 
-    /* Центр-рамка */
     #overlay {
       position: fixed;
       left: 50%;
@@ -70,7 +69,6 @@
 
 <body>
   <div id="topbar">Инициализация камеры…</div>
-
   <div id="reader"></div>
 
   <div id="overlay">
@@ -86,7 +84,6 @@
 
     const topbar = document.getElementById("topbar");
 
-    // Рамка под небольшие “производственные” QR
     const minSide = Math.min(window.innerWidth, window.innerHeight);
     const box = Math.max(150, Math.min(190, Math.floor(minSide * 0.45)));
     document.documentElement.style.setProperty("--box", box + "px");
@@ -100,20 +97,27 @@
 
     let locked = false;
     let lastSent = "";
-
     const qr = new Html5Qrcode("reader");
 
     function setStatus(text) {
       topbar.textContent = text;
     }
 
-    function sendToBot(decodedText) {
-      // анти-дубликаты
-      if (decodedText === lastSent) return;
-      lastSent = decodedText;
+    function normalizeCode(text) {
+      let s = String(text || "");
+      s = s.replace(/[\uFEFF\u200B\u2060\u00A0]/g, "");  // hidden chars
+      s = s.replace(/[–—−‑‒]/g, "-");                    // bad dashes
+      return s.trim();
+    }
 
-      setStatus("QR распознан:\n" + decodedText + "\nОтправлено в бота. Сканируйте следующий.");
-      tg.sendData(decodedText);
+    function sendToBot(decodedText) {
+      const normalized = normalizeCode(decodedText);
+      if (!normalized) return;
+      if (normalized === lastSent) return;
+      lastSent = normalized;
+
+      setStatus("QR распознан:\n" + normalized + "\nОтправлено в бота. Сканируйте следующий.");
+      tg.sendData(JSON.stringify({ value: normalized }));
     }
 
     async function start() {
@@ -129,7 +133,6 @@
 
           sendToBot(decodedText);
 
-          // Разрешаем следующий скан через короткую паузу
           setTimeout(() => {
             locked = false;
             setStatus("Наведи следующий QR в рамку. Сканирование…");
