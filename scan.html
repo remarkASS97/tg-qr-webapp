@@ -83,6 +83,7 @@
   <script>
     const tg = window.Telegram?.WebApp;
     const statusEl = document.getElementById("status");
+    const readerEl = document.getElementById("reader");
 
     if (!tg) {
       statusEl.textContent = "Ошибка: Telegram WebApp API недоступен";
@@ -105,7 +106,7 @@
     const qr = new Html5Qrcode("reader");
     let locked = false;
     let lastSent = "";
-    let closedAfterScan = false;
+    let scanClosed = false;
 
     function setStatus(text, isOk = false) {
       statusEl.textContent = text;
@@ -125,16 +126,19 @@
 
       lastSent = value;
       tg.sendData(JSON.stringify({ value }));
-      setStatus("QR отправлен", true);
       return true;
     }
 
-    function closeWebAppSoon() {
-      if (closedAfterScan) return;
-      closedAfterScan = true;
-      setTimeout(() => {
-        if (typeof tg.close === "function") tg.close();
-      }, 180);
+    function collapseScanner() {
+      if (scanClosed) return;
+      scanClosed = true;
+
+      if (typeof tg.closeScanQrPopup === "function") {
+        tg.closeScanQrPopup();
+      }
+
+      readerEl.style.display = "none";
+      setStatus("QR отправлен", true);
     }
 
     // 1) Приоритет: нативный сканер Telegram
@@ -147,7 +151,7 @@
         const sent = sendToBot(scannedText);
         if (sent) {
           // false => закрыть popup после одного успешного скана
-          closeWebAppSoon();
+          collapseScanner();
           return false;
         }
         return true;
@@ -178,7 +182,7 @@
           }
 
           qr.stop().catch(() => {}).finally(() => {
-            closeWebAppSoon();
+            collapseScanner();
           });
         },
         () => {}
