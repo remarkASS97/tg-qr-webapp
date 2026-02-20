@@ -9,141 +9,191 @@
   <script src="https://unpkg.com/html5-qrcode"></script>
 
   <style>
+    :root {
+      --bg: #000;
+      --fg: #fff;
+      --ok: #32d74b;
+      --shadow: rgba(0, 0, 0, 0.75);
+    }
+
     html, body {
       margin: 0;
       padding: 0;
-      background: #000;
+      width: 100%;
       height: 100%;
       overflow: hidden;
-      font-family: Arial, sans-serif;
-      color: #fff;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     }
 
     #reader {
+      position: fixed;
+      inset: 0;
       width: 100vw;
       height: 100vh;
-      position: relative;
+      background: #000;
     }
 
-    #topbar {
+    #status {
       position: fixed;
-      top: 10px;
-      left: 0;
-      right: 0;
-      z-index: 50;
+      left: 12px;
+      right: 12px;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+      z-index: 20;
+      min-height: 24px;
       text-align: center;
-      pointer-events: none;
-      padding: 0 12px;
-      font-size: 16px;
-      line-height: 1.25;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
-      white-space: pre-line;
-    }
-
-    #overlay {
-      position: fixed;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
-      z-index: 40;
-      width: var(--box);
-      height: var(--box);
-      border: 3px solid rgba(0, 255, 0, 0.9);
-      border-radius: 12px;
-      box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+      font-size: 15px;
+      line-height: 1.3;
+      text-shadow: 0 1px 2px var(--shadow);
       pointer-events: none;
     }
 
-    .corner {
-      position: absolute;
-      width: 22px;
-      height: 22px;
-      border: 4px solid rgba(0, 255, 0, 0.95);
+    .status-ok {
+      color: var(--ok);
     }
-    .c-tl { left: -3px; top: -3px; border-right: 0; border-bottom: 0; border-top-left-radius: 12px; }
-    .c-tr { right: -3px; top: -3px; border-left: 0; border-bottom: 0; border-top-right-radius: 12px; }
-    .c-bl { left: -3px; bottom: -3px; border-right: 0; border-top: 0; border-bottom-left-radius: 12px; }
-    .c-br { right: -3px; bottom: -3px; border-left: 0; border-top: 0; border-bottom-right-radius: 12px; }
+
+    /* html5-qrcode: скрываем лишний UI, оставляем один экран */
+    #reader__dashboard,
+    #reader__header_message {
+      display: none !important;
+    }
+
+    #reader__scan_region {
+      width: 100% !important;
+      height: 100% !important;
+      background: #000 !important;
+      display: flex !important;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #reader video {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+    }
   </style>
 </head>
 
 <body>
-  <div id="topbar">Инициализация камеры…</div>
   <div id="reader"></div>
-
-  <div id="overlay">
-    <div class="corner c-tl"></div>
-    <div class="corner c-tr"></div>
-    <div class="corner c-bl"></div>
-    <div class="corner c-br"></div>
-  </div>
+  <div id="status">Инициализация камеры...</div>
 
   <script>
-    const tg = Telegram.WebApp;
+    const tg = window.Telegram?.WebApp;
+    const statusEl = document.getElementById("status");
+
+    if (!tg) {
+      statusEl.textContent = "Ошибка: Telegram WebApp API недоступен";
+      throw new Error("Telegram WebApp API is not available");
+    }
+
+    tg.ready();
     tg.expand();
 
-    const topbar = document.getElementById("topbar");
-
     const minSide = Math.min(window.innerWidth, window.innerHeight);
-    const box = Math.max(150, Math.min(190, Math.floor(minSide * 0.45)));
-    document.documentElement.style.setProperty("--box", box + "px");
+    const box = Math.max(190, Math.min(300, Math.floor(minSide * 0.62)));
 
     const config = {
-      fps: 25,
+      fps: 20,
       qrbox: { width: box, height: box },
-      aspectRatio: 1.0,
+      aspectRatio: 1,
       disableFlip: true
     };
 
+    const qr = new Html5Qrcode("reader");
     let locked = false;
     let lastSent = "";
-    const qr = new Html5Qrcode("reader");
+    let closedAfterScan = false;
 
-    function setStatus(text) {
-      topbar.textContent = text;
+    function setStatus(text, isOk = false) {
+      statusEl.textContent = text;
+      statusEl.classList.toggle("status-ok", isOk);
     }
 
     function normalizeCode(text) {
       let s = String(text || "");
-      s = s.replace(/[\uFEFF\u200B\u2060\u00A0]/g, "");  // hidden chars
-      s = s.replace(/[–—−‑‒]/g, "-");                    // bad dashes
+      s = s.replace(/[\uFEFF\u200B\u2060\u00A0]/g, "");
+      s = s.replace(/[–—−‑‒]/g, "-");
       return s.trim();
     }
 
-    function sendToBot(decodedText) {
-      const normalized = normalizeCode(decodedText);
-      if (!normalized) return;
-      if (normalized === lastSent) return;
-      lastSent = normalized;
+    function sendToBot(rawText) {
+      const value = normalizeCode(rawText);
+      if (!value || value === lastSent) return false;
 
-      setStatus("QR распознан:\n" + normalized + "\nОтправлено в бота. Сканируйте следующий.");
-      tg.sendData(JSON.stringify({ value: normalized }));
+      lastSent = value;
+      tg.sendData(JSON.stringify({ value }));
+      setStatus("QR отправлен", true);
+      return true;
     }
 
-    async function start() {
-      locked = false;
-      setStatus("Наведи QR в рамку. Сканирование…");
+    function closeWebAppSoon() {
+      if (closedAfterScan) return;
+      closedAfterScan = true;
+      setTimeout(() => {
+        if (typeof tg.close === "function") tg.close();
+      }, 180);
+    }
+
+    // 1) Приоритет: нативный сканер Telegram
+    function startTelegramNativeScanner() {
+      if (typeof tg.showScanQrPopup !== "function") return false;
+
+      setStatus("Наведите QR в рамку");
+
+      tg.showScanQrPopup({ text: "Сканируйте QR" }, (scannedText) => {
+        const sent = sendToBot(scannedText);
+        if (sent) {
+          // false => закрыть popup после одного успешного скана
+          closeWebAppSoon();
+          return false;
+        }
+        return true;
+      });
+
+      window.addEventListener("beforeunload", () => {
+        if (typeof tg.closeScanQrPopup === "function") tg.closeScanQrPopup();
+      });
+
+      return true;
+    }
+
+    // 2) Fallback: html5-qrcode
+    async function startWebCameraScanner() {
+      setStatus("Наведите QR в рамку");
 
       await qr.start(
-        { facingMode: "environment" },
+        { facingMode: { ideal: "environment" } },
         config,
         (decodedText) => {
           if (locked) return;
           locked = true;
 
-          sendToBot(decodedText);
-
-          setTimeout(() => {
+          const sent = sendToBot(decodedText);
+          if (!sent) {
             locked = false;
-            setStatus("Наведи следующий QR в рамку. Сканирование…");
-          }, 900);
+            return;
+          }
+
+          qr.stop().catch(() => {}).finally(() => {
+            closeWebAppSoon();
+          });
         },
         () => {}
       );
     }
 
-    start().catch(err => setStatus("Ошибка камеры: " + err));
+    (async () => {
+      try {
+        if (startTelegramNativeScanner()) return;
+        await startWebCameraScanner();
+      } catch (err) {
+        const message = err?.message || String(err);
+        setStatus("Ошибка камеры: " + message);
+      }
+    })();
   </script>
 </body>
 </html>
-
