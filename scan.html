@@ -106,7 +106,6 @@
     let locked = false;
     let lastSent = "";
     let closedAfterScan = false;
-    let hasScanned = false;
 
     function setStatus(text, isOk = false) {
       statusEl.textContent = text;
@@ -125,7 +124,6 @@
       if (!value || value === lastSent) return false;
 
       lastSent = value;
-      hasScanned = true;
       tg.sendData(JSON.stringify({ value }));
       setStatus("QR отправлен", true);
       return true;
@@ -134,9 +132,13 @@
     function closeWebAppSoon() {
       if (closedAfterScan) return;
       closedAfterScan = true;
-      setTimeout(() => {
-        if (typeof tg.close === "function") tg.close();
-      }, 180);
+
+      // На iOS закрытие может сработать не с первого вызова
+      [0, 180, 420].forEach((delay) => {
+        setTimeout(() => {
+          if (typeof tg.close === "function") tg.close();
+        }, delay);
+      });
     }
 
     // 1) Приоритет: нативный сканер Telegram
@@ -144,20 +146,20 @@
       if (typeof tg.showScanQrPopup !== "function") return false;
 
       setStatus("Наведите QR в рамку");
-      hasScanned = false;
 
       if (typeof tg.onEvent === "function") {
         tg.onEvent("scan_qr_popup_closed", () => {
-          // Нажали "Отмена" до сканирования -> сразу закрываем web app
-          if (!hasScanned) closeWebAppSoon();
+          // Нажали "Отмена" -> сразу закрываем web app
+          closeWebAppSoon();
         });
       }
 
       tg.showScanQrPopup({ text: "Сканируйте QR" }, (scannedText) => {
         const sent = sendToBot(scannedText);
         if (sent) {
-          closeWebAppSoon();
-          return false; // закрыть popup после успешного скана
+          // Закрыть popup после успешного скана + закрыть web app
+          setTimeout(closeWebAppSoon, 250);
+          return false;
         }
         return true;
       });
