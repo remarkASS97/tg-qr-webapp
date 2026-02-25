@@ -49,11 +49,8 @@
       pointer-events: none;
     }
 
-    .status-ok {
-      color: var(--ok);
-    }
+    .status-ok { color: var(--ok); }
 
-    /* html5-qrcode: оставляем только видео+одну рамку */
     #reader__dashboard,
     #reader__header_message {
       display: none !important;
@@ -75,7 +72,6 @@
     }
   </style>
 </head>
-
 <body>
   <div id="reader"></div>
   <div id="status">Инициализация камеры...</div>
@@ -84,10 +80,7 @@
     const tg = window.Telegram?.WebApp;
     const statusEl = document.getElementById("status");
 
-    if (!tg) {
-      statusEl.textContent = "Ошибка: Telegram WebApp API недоступен";
-      throw new Error("Telegram WebApp API is not available");
-    }
+    if (!tg) throw new Error("Telegram WebApp API is not available");
 
     tg.ready();
     tg.expand();
@@ -105,11 +98,12 @@
     const qr = new Html5Qrcode("reader");
     let locked = false;
     let lastSent = "";
-    let closedAfterScan = false;
+    let closed = false;
+    let scanned = false;
 
-    function setStatus(text, isOk = false) {
+    function setStatus(text, ok = false) {
       statusEl.textContent = text;
-      statusEl.classList.toggle("status-ok", isOk);
+      statusEl.classList.toggle("status-ok", ok);
     }
 
     function normalizeCode(text) {
@@ -122,23 +116,26 @@
     function sendToBot(rawText) {
       const value = normalizeCode(rawText);
       if (!value || value === lastSent) return false;
-
       lastSent = value;
+      scanned = true;
       tg.sendData(JSON.stringify({ value }));
       setStatus("QR отправлен", true);
       return true;
     }
 
-    function closeWebAppSoon() {
-      if (closedAfterScan) return;
-      closedAfterScan = true;
-
-      // На iOS закрытие может сработать не с первого вызова
-      [0, 180, 420].forEach((delay) => {
+    function forceCloseWebApp() {
+      if (closed) return;
+      closed = true;
+      [0, 120, 350].forEach((t) => {
         setTimeout(() => {
-          if (typeof tg.close === "function") tg.close();
-        }, delay);
+          try { tg.close(); } catch (_) {}
+        }, t);
       });
+    }
+
+    function cleanupNativeEvents(onClosed, onQr) {
+      try { tg.offEvent?.("scanQrPopupClosed", onClosed); } catch (_) {}
+      try { tg.offEvent?.("qrTextReceived", onQr); } catch (_) {}
     }
 
     // 1) Приоритет: нативный сканер Telegram
@@ -147,27 +144,26 @@
 
       setStatus("Наведите QR в рамку");
 
-      if (typeof tg.onEvent === "function") {
-        tg.onEvent("scan_qr_popup_closed", () => {
-          // Нажали "Отмена" -> сразу закрываем web app
-          closeWebAppSoon();
-        });
-      }
+      const onPopupClosed = () => {
+        cleanupNativeEvents(onPopupClosed, onQrTextReceived);
+        // Нажали "Отмена" -> сразу закрыть mini app, без второго экрана
+        if (!scanned) forceCloseWebApp();
+      };
 
-      tg.showScanQrPopup({ text: "Сканируйте QR" }, (scannedText) => {
-        const sent = sendToBot(scannedText);
-        if (sent) {
-          // Закрыть popup после успешного скана + закрыть web app
-          setTimeout(closeWebAppSoon, 250);
-          return false;
-        }
-        return true;
-      });
+      const onQrTextReceived = (event) => {
+        const text = event?.data || event;
+        const sent = sendToBot(text);
+        if (!sent) return;
 
-      window.addEventListener("beforeunload", () => {
-        if (typeof tg.closeScanQrPopup === "function") tg.closeScanQrPopup();
-      });
+        cleanupNativeEvents(onPopupClosed, onQrTextReceived);
+        try { tg.closeScanQrPopup?.(); } catch (_) {}
+        forceCloseWebApp();
+      };
 
+      tg.onEvent?.("scanQrPopupClosed", onPopupClosed);
+      tg.onEvent?.("qrTextReceived", onQrTextReceived);
+
+      tg.showScanQrPopup({ text: "Сканируйте QR" });
       return true;
     }
 
@@ -179,7 +175,7 @@
         { facingMode: { ideal: "environment" } },
         config,
         (decodedText) => {
-          if (locked) return;
+          if (locked || closed) return;
           locked = true;
 
           const sent = sendToBot(decodedText);
@@ -188,9 +184,7 @@
             return;
           }
 
-          qr.stop().catch(() => {}).finally(() => {
-            closeWebAppSoon();
-          });
+          qr.stop().catch(() => {}).finally(() => forceCloseWebApp());
         },
         () => {}
       );
@@ -201,8 +195,7 @@
         if (startTelegramNativeScanner()) return;
         await startWebCameraScanner();
       } catch (err) {
-        const message = err?.message || String(err);
-        setStatus("Ошибка камеры: " + message);
+        setStatus("Ошибка камеры: " + (err?.message || String(err)));
       }
     })();
   </script>
